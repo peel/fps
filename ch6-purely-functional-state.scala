@@ -126,6 +126,12 @@ object State {
   def unit[S,A](a: A) = State{s: S => (a,s)}
   def sequence[S,A](ss: List[State[S,A]]): State[S,List[A]] =
     ss.foldRight(unit[S,List[A]](Nil))((h,t) => h.map2(t)(_::_))
+  def get[S]: State[S,S] = State(s => (s,s))
+  def set[S](s: S): State[S,Unit] = State(_ => ((),s))
+  def modify[S](f: S => S): State[S,Unit] = for {
+    s <- get
+    _ <- set(f(s))
+  } yield ()
 }
 
 case class State[S,+A](run: S => (A,S)){
@@ -138,4 +144,27 @@ case class State[S,+A](run: S => (A,S)){
     flatMap{a: A => State.unit(f(a))}
   def map2[B,C](s2: State[S,B])(f: (A,B) => C): State[S,C] =
     flatMap{a: A => s2.map(b => f(a,b))}
+}
+
+sealed trait Input
+case object Coin extends Input
+case object Turn extends Input
+case class Machine(locked: Boolean, candies: Int, coins: Int)
+
+object Machine{
+  def update = (i: Input) => (s: Machine) => {
+    (i,s) match {
+      case (Coin, m @ Machine(true,_,coins)) => m.copy(coins=coins+1)
+      case (Turn, m @ Machine(false,candies,_)) => m.copy(locked=true,candies=candies-1)
+      case (_, m: Machine) => m
+    }
+  }
+
+  def change = (s: State[Machine,(Int,Int)]) => State.modify[Machine] _ compose update
+
+  def simulateMachine(inputs: List[Input]): State[Machine,(Int,Int)] =
+    for {
+      _ <- State.sequence(inputs.map(State.modify[Machine] _ compose update))
+      s <- State.get
+    } yield (s.coins, s.candies)
 }
